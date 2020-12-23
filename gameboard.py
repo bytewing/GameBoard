@@ -1,24 +1,135 @@
-from tkinter import *
-import tkinter as tk
-from tkinter import filedialog
-import winsound
-import threading
-
-import time
-import inspect
-import imp
 import functools
+import importlib
+import inspect
+import sys
+import threading
+import tkinter as tk
 from os import path
+from tkinter import *
+from tkinter import Tk, Entry, Label, StringVar
+from tkinter import filedialog
+from typing import Any, Tuple
 
-class GameCell(Label):
-    
-    def __init__(self, root, label = "?"):
-        self.baseFont = ("Times",10)
-        #Call the constructor in the parent class Button
-        Button.__init__(self, root, width=3, height=2,  relief=GROOVE, font=self.baseFont)
+
+class WriteLabel(Label):
+    """
+    Just a writable label widget.
+    """
+
+    def __init__(self, owner, master: Any = None, *args: Tuple[Any], **kwargs: Any):
+        """
+        Constructor.
+
+        :param master:  The parent of the widget.
+        :type master:   Any.
+
+        :param args:    Additional positional arguments.
+        :type args:     Tuple[Any].
+
+        :param kwargs:  Additional keyword arguments.
+        :type kwargs:   Any.
+        """
+        super().__init__(*args, master=master, **kwargs)
+
+        self._parent = master
+        self._owner = owner
+        self._value = StringVar()
+        self._entry_value = StringVar()
+
+        if 'text' in kwargs:
+            self._value.set(kwargs['text'])
+            self._entry_value.set(kwargs['text'])
+
+        self.config(
+            textvariable=self._value,
+            relief='raised'
+        )
+
+        self._entry = Entry(
+            textvariable=self._entry_value,
+            justify='center'
+        )
+
+        self.behaviours()
+        self.update()
+
+    def set_label(self, label):
+        self._value.set(label)
+        self._entry_value.set(label)
+        self.config(textvariable=self._value)
+
+    def get_label(self):
+        return self._value.get()
+
+    def behaviours(self) -> None:
+        """
+        Sets the binding for interested events by defining the behaviour of the widget.
+
+        :return: None.
+        :rtype: None.
+        """
+        self.bind('<Button-1>', self.handle)
+        self.bind('<Shift-1>', self.edit)
+        self.bind('<Configure>', self.save)
+        self._entry.bind('<FocusOut>', self.save)
+        self._entry.bind('<Return>', self.save)
+
+    def handle(self, _):
+        self._owner.handle(self)
+
+    def edit(self, _) -> None:
+        """
+        It places the entry as overlay on top of the current widget.
+
+        :param _:   The event object [unused].
+        :type _:    Event.
+
+        :return: None.
+        :rtype: None.
+        """
+        self._entry.place_forget()
+        self._entry_value.set(value=self._value.get())
+        self._entry.place(
+            x=self.winfo_x(),
+            y=self.winfo_y(),
+            width=self.winfo_width(),
+            height=self.winfo_height()
+        )
+        self._entry.focus_set()
+
+    def save(self, _) -> None:
+        """
+        It hides the entry and copy its actual value to the current widget.
+
+        :param _:   The event object [unused].
+        :type _:    Event.
+
+        :return: None.
+        :rtype: None.
+        """
+        self._entry.place_forget()
+        self._value.set(value=self._entry_value.get())
+        self.update()
+
+
+class GameCell(WriteLabel):
+
+    def __init__(self, root, owner, row, col, label=""):
+        self.baseFont = ("Times", 12)
+        # Call the constructor in the parent class: Button|WriteLabel
+        WriteLabel.__init__(self, owner, root, text=label, width=3, height=2, relief=GROOVE, font=self.baseFont)
         self.label = label
-        self.color = root.cget('bg') #default tkinter root window color
-        self.show(root);
+        self.color = root.cget('bg')  # default tkinter root window color
+
+        self.row = row
+        self.col = col
+        self.show(root)
+
+    def get_row(self):
+        return self.row
+
+    def get_col(self):
+        return self.col
 
     def reset(self):
         self.set_color("gray")
@@ -26,39 +137,25 @@ class GameCell(Label):
 
     def set_color(self, c):
         self.color = c
-        self.configure(bg = self.color)
+        self.configure(bg=self.color)
 
     def get_color(self):
         return self.color
 
-    def set_label(self, label):
-        self.label = label
-        self.config(text = self.label)
-
-    def get_label(self):
-        return self.label
-
-    def upSize(self):
-        self.configure(width=15, height=5)
-        
-    def downSize(self):
-        self.configure(width=10, height= 5, font=self.baseFont)
-
     def show(self, root):
         self.isFaceUp = True
-        self.config(text=self.label, font=("Arial", 14))
-        root.update() #update root so that the cell is repainted immediately
-    
+        self.config(text=self.label, font=("Arial", 18))
+        root.update()  # update root so that the cell is repainted immediately
+
     def hide(self):
         self.configure(text="", bg='LIGHT GRAY')
         self.isFaceUp = False
 
 
-          
 class GameBoard(object):
     """
     :author: Sridhar Narayan
-    :version: 1.0 - April 2015
+    :version: 1.0 - December 2020
 
     :contact: narayans@uncw.edu
     :organization: University of North Carolina Wilmington
@@ -72,6 +169,10 @@ class GameBoard(object):
     def get_board():
         return GameBoard.__gameboard
 
+    def get_cell(self, row, col):
+        cell_offset = row * self.num_columns + col
+        return self.cells[cell_offset]
+
     def get_row_count(self):
         return self.num_rows
 
@@ -83,46 +184,57 @@ class GameBoard(object):
             c.reset()
 
     def set_color(self, r, c, color):
-        cell_offset = r*self.num_columns + c
+        cell = self.get_cell(r, c)
 
-        self.cells[cell_offset].set_color(color)
+        cell.set_color(color)
 
     def get_color(self, r, c):
-        cell_offset = r*self.num_columns + c
+        cell = self.get_cell(r, c)
 
-        return self.cells[cell_offset].get_color()
+        return cell.get_color()
 
     def set_label(self, r, c, label):
-        cell_offset = r*self.num_columns + c
+        cell = self.get_cell(r, c)
 
-        self.cells[cell_offset].set_label(label)
+        cell.set_label(label)
 
     def get_label(self, r, c):
-        cell_offset = r*self.num_columns + c
+        cell = self.get_cell(r, c)
 
-        return self.cells[cell_offset].get_label()
+        return cell.get_label()
 
-    def set_size(self, num_rows , num_cols):
-        self.CardType = GameCell #what kind of card
+    def set_size(self, num_rows, num_cols):
+        self.CardType = GameCell  # what kind of card
         self.num_rows = num_rows
         self.num_columns = num_cols
 
-        self.__buildUI()
+        self.__build_ui()
+        self.__main_root.update()
         self.__maybe_load_code()
 
-    def __init__(self, num_rows = 4, num_columns = 4, title = "Game Board"):
+    def __init__(self, num_rows=4, num_columns=4, title="Game Board", threaded=True, start=None, handle=None):
 
         self.__main_root = Tk()
-        self.__main_root.config(width=600, height=400)
-        #Disable resizing
-        self.__main_root.resizable(0,0)
+        _width = 600
+        _height = 400
+        self.__main_root.config(width=_width, height=_height)
+        # Disable resizing
+        # self.__main_root.resizable(0,0)
         self.__main_root.title(title)
+
+        self.__threaded = threaded  # default True - code is run in separate thread
+        self.__handle = handle  # default None - no event handler
+        self.__start = start  # default None - no startup code
 
         self.opsMenu = None
         self.__active_key = None
         GameBoard.__gameboard = self
 
         self.set_size(num_rows, num_columns)
+
+        if self.__start is not None:  # run this function on startup
+            # self.__exec_task(start)
+            self.__start()
 
         self.__main_root.mainloop()
 
@@ -135,7 +247,7 @@ class GameBoard(object):
         else:
             return [menu_item.entrycget(i, 'label') for i in range(mx + 1)]
 
- # open specified file and determine module
+    # open specified file and determine module
     def __load_file(self, code_file_name, message):
         folder, filename = code_file_name.rsplit('/', 1)
         if folder not in sys.path:
@@ -143,27 +255,30 @@ class GameBoard(object):
         module_name = filename.split('.')[0]
         self.currentModuleName = module_name
 
-        open_file, file_name, description = imp.find_module(module_name)
-        module = imp.load_module(code_file_name, open_file, file_name, description)
+        mod = importlib.import_module(module_name)
+        # open_file, file_name, description = imp.find_module(module_name)
+        # module = imp.load_module(code_file_name, open_file, file_name, description)
 
-        self.__load_functions(module, message)
+        if message == "Reloaded":
+            importlib.reload(mod)  # refresh module definition if reloading
+        self.__load_functions(mod)  # self.currentModule)# module
 
-# load student code
+    # load student code
     def __load_code(self):
         code_file_types = [("Python files", "*.py")]
         code_file_name = filedialog.askopenfilename(filetypes=code_file_types)
         if len(code_file_name) > 0:
             self.currentCodeFileName = code_file_name
-            self.__load_file(code_file_name, "Loaded ")
+            self.__load_file(code_file_name, "Loaded")
 
     # reload the currently loaded code file
     def __reload_code(self):
         if self.currentCodeFileName is not None:
             # noinspection PyTypeChecker
-            #self.__show_message("Reloaded code from " + self.currentCodeFileName)
-            self.__load_file(self.currentCodeFileName, "Reloaded ")
+            # self.__show_message("Reloaded code from " + self.currentCodeFileName)
+            self.__load_file(self.currentCodeFileName, "Reloaded")
 
-  # update the code binding (definition) for the specified function
+    # update the code binding (definition) for the specified function
     def __update_func_def(self, func_to_update):
         functions = inspect.getmembers(self.currentModule, inspect.isfunction)
 
@@ -178,7 +293,10 @@ class GameBoard(object):
     def __exec_task(self, f):
         self.__reload_code()  # reload the function definition file
         f = self.__update_func_def(f)  # update the binding of the function of interest
-        threading.Thread(target=f).start()  # execute that function
+        if self.__threaded:  # default behavior
+            threading.Thread(target=f).start()  # execute that function in own thread
+        else:  # handles situations that are not thread safe
+            f()  # execute function in current thread
 
     # load the user code contained in the file from which the viewer was instantiated
     def __maybe_load_code(self):
@@ -188,10 +306,10 @@ class GameBoard(object):
         if hasattr(main_mod, '__file__'):  # launched by executing a Python script
             self.currentCodeFileName = path.abspath(sys.modules['__main__'].__file__)
             self.currentCodeFileName = self.currentCodeFileName.replace('\\', '/')
-            self.__load_functions(main_mod, "Loaded ")
+            self.__load_functions(main_mod)
 
     # add functions defined in specified file to myOps menu
-    def __load_functions(self, module, message):
+    def __load_functions(self, module):  # message):
         self.currentModule = module
         functions = inspect.getmembers(module, inspect.isfunction)
 
@@ -215,25 +333,25 @@ class GameBoard(object):
             # update existing option, or add new one
             self.opsMenu.add_command(label=f_label, command=functools.partial(self.__exec_task, f_name))
 
+    # start a new game
+    def new_game(self, card_type):
+        for child in self.__main_root.winfo_children():
+            child.destroy()  # remove all old cards
 
-    #start a new game    
-    def newGame(self, CardType):
-        for child in self.__main_root.winfo_children(): child.destroy() #remove all old cards
-        
         GameBoard(self.num_rows, self.num_columns)
-    
-    def __buildMenu(self, root):
+
+    def __build_menu(self, root):
         menubar = Menu(root)
 
-        gameMenu = Menu(menubar, tearoff=0)
+        game_menu = Menu(menubar, tearoff=0)
 
         load_menu = Menu(menubar, tearoff=0)
         load_menu.add_command(label="Load", command=self.__load_code)
         load_menu.add_command(label="Reload", command=self.__reload_code)
 
-        gameMenu.add_command(label="Exit", command=root.quit)
-        menubar.add_cascade(label="Game", menu=gameMenu)
-        menubar.add_cascade(label="MyCode", menu=load_menu)
+        game_menu.add_command(label="Exit", command=root.destroy)
+        menubar.add_cascade(label="Game", menu=game_menu)
+        menubar.add_cascade(label="Code", menu=load_menu)
 
         self.opsMenu = Menu(menubar, tearoff=0)
 
@@ -242,23 +360,30 @@ class GameBoard(object):
 
         root.config(menu=menubar)
 
-    def __buildUI(self):
-        for child in self.__main_root.winfo_children(): child.destroy() #remove all old card
+    def handle(self, clicked_cell):
+        if self.__handle is not None:  # if an event handler is specified, invoke it
+            self.__handle(clicked_cell)
+
+    def __build_ui(self):
+        for child in self.__main_root.winfo_children():
+            child.destroy()  # remove all old cards
         self.cells = []
 
         count = 0
         for r in range(self.num_rows):
+            Grid.rowconfigure(self.__main_root, r, weight=1)
             for c in range(self.num_columns):
+                Grid.columnconfigure(self.__main_root, c, weight=1)
 
-                c1 = GameCell(self.__main_root)
+                c1 = GameCell(self.__main_root, self, r, c)
 
-                self.cells.append(c1) # add card to the cells list
+                self.cells.append(c1)  # add card to the cells list
 
-                self.cells[count].grid(row=r, column=c, padx=5, pady=5)
+                self.cells[count].grid(row=r, column=c, padx=5, pady=5, sticky=N + S + E + W)
                 count = count + 1
 
-        self.__buildMenu(self.__main_root)
-    
-# #only do this if invoked as application
-if __name__ == '__main__':
-    GameBoard(3,3)
+        self.__build_menu(self.__main_root)
+
+# only do this if invoked as application
+# if __name__ == '__main__':
+# GameBoard(8,8)
